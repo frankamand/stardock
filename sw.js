@@ -1,5 +1,5 @@
 // Star Dock offline cache. Bump VERSION whenever any file changes, so phones fetch the new version.
-const VERSION = 'stardock-v1.20';
+const VERSION = 'stardock-v1.20b';
 const FILES = [
   './', './index.html', './manifest.webmanifest',
   './fonts/orbitron-latin-700-normal.woff2', './fonts/orbitron-latin-900-normal.woff2', './fonts/share-tech-mono-latin-400-normal.woff2',
@@ -7,7 +7,8 @@ const FILES = [
 ];
 self.addEventListener('install', e => { e.waitUntil(caches.open(VERSION).then(c => c.addAll(FILES)).then(() => self.skipWaiting())); });
 self.addEventListener('activate', e => {
-  e.waitUntil(caches.keys().then(keys => Promise.all(keys.filter(k => k !== VERSION).map(k => caches.delete(k)))).then(() => self.clients.claim()));
+  // only clear Star Dock's own old caches: Tilescraper lives on the same site (frankamand.github.io) and shares cache storage
+  e.waitUntil(caches.keys().then(keys => Promise.all(keys.filter(k => k.startsWith('stardock-') && k !== VERSION).map(k => caches.delete(k)))).then(() => self.clients.claim()));
 });
 // The page itself: network first (so updates arrive), cache when offline. Everything else: cache first.
 self.addEventListener('fetch', e => {
