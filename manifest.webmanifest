@@ -1,0 +1,16 @@
+{
+  "name": "Star Dock",
+  "short_name": "Star Dock",
+  "description": "Steer a little rocket through a field of appearing stars and dock with the moving station. A space-disco remake.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "fullscreen",
+  "orientation": "landscape",
+  "background_color": "#0b0322",
+  "theme_color": "#0b0322",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icons/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
