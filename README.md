@@ -5,7 +5,7 @@
 A remake of an old game of mine: a little rocket crosses a field of stars that pop up out of nowhere.
 Stars blink for 5 seconds and are harmless, then turn solid and deadly. Dock nose-first with the moving station for 1000 points.
 
-- Steer up and down with the slide strip on the right, the arrow keys, or a gamepad (stick or D-pad).
+- Your ship rides down the launch station on the left; your first move launches it. Then steer up and down with the slide strip on the right, the arrow keys, or a gamepad (stick or D-pad).
 - **Mine** clears nearby stars after 5 seconds. **Brake** fires reverse thrusters to time your docking.
 - From level 2, planets drift across: skim past one for a gravity slingshot.
 - Three levels with their own ship, station and music (space disco, then a brass march in A Lydian).

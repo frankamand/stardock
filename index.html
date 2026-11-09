@@ -145,10 +145,10 @@ h1{font-family:'Orbitron',sans-serif;font-weight:900;font-size:clamp(22px,calc(4
 
 <script>
 'use strict';
-const VERSION = 'v1.16';
+const VERSION = 'v1.17';
 /* ================= constants & settings ================= */
 const W = 800, H = 450, TOP = 36, BOT = H - 10;
-const START_X = 34, SAFE_L = 96, SAFE_R = W - 104, ST_X = W - 34;
+const LS_X = 12, START_X = 50, SAFE_L = 96, SAFE_R = W - 104, ST_X = W - 34;
 const RS = 1.2;
 const DOCK_TOL = 8, BRAKE_MAX = 3, VMAX = 230, BLINK = 5, FUSE = 5, BLAST = 54, BPM = 116;
 const DEF = { speed: 60, rate: 0.8, station: 55, style: 'both', step: 15, lvDocks: 10, lvMin: 3, startLv: 1, grav: 1 };
@@ -466,6 +466,12 @@ const A = {
     const f = this.noiseHit(now + 0.08, 'highpass', 2500, 0.7, 0.07, 0.5, this.fx, true);
     f.frequency.exponentialRampToValueAtTime(6000, now + 0.5);
   },
+  launchFx() {
+    if (!this.ok()) return; const now = this.ctx.currentTime;
+    this.tone(now, { type: 'triangle', f: 640, f2: 520, dur: 0.08, gain: 0.05 });
+    this.tone(now + 0.03, { f: 160, f2: 520, glide: 0.35, dur: 0.4, gain: 0.12, send: 0.3 });
+    const f = this.noiseHit(now, 'bandpass', 900, 1, 0.12, 0.45, this.fx, true); f.frequency.exponentialRampToValueAtTime(3500, now + 0.4);
+  },
   sling() {
     if (!this.ok()) return; const now = this.ctx.currentTime;
     this.tone(now, { f: 260, f2: 980, glide: 0.55, dur: 0.6, gain: 0.07, send: 0.5 });
@@ -675,9 +681,10 @@ const far = Array.from({ length: 110 }, () => ({ x: Math.random() * W, y: TOP + 
 /* ================= game state ================= */
 let state = 'title', phase = 'fly', ovKind = 'title';
 let score = 0, lives = 3, mineStock = 3, docks = 0, newBest = false;
-const R = { x: START_X, y: H / 2, boost: 0, inWell: false, wob: 0, lock: 0, locked: false, vx: 0, vy: 0, ty: H / 2, a: 0, roll: 0, spin: 0, inv: 0, ready: 0, visible: true };
+const R = { x: START_X, y: H / 2, clamped: false, clampT: 0, drift: 0, boost: 0, inWell: false, wob: 0, lock: 0, locked: false, vx: 0, vy: 0, ty: H / 2, a: 0, roll: 0, spin: 0, inv: 0, ready: 0, visible: true };
 let braking = false, fuel = BRAKE_MAX, brakeLevel = 0;
 let level = 1, levelT = 0, levelDocks = 0, levelPending = false, saturns = [], banner = null, jumpTo = null;
+let lsY = TOP - 30, drawingLaunch = false;
 let boom = null, timeScale = 1, slowT = 99, pops = [], bounceCD = 0;
 const curSpeed = () => S.speed + (level - 1) * S.step;
 const SAT_COLS = [['#ffd59a', '#d9823c'], ['#a8f2ff', '#3a86c8'], ['#ffb0e8', '#b8449e'], ['#d2c2ff', '#7356d0'], ['#c9ffb0', '#4f9a3c']];
@@ -939,7 +946,7 @@ function demoStars() {
 }
 demoStars();
 
-function resetRocket(ready) { R.boost = 0; R.inWell = false; R.wob = 0; R.lock = 0; R.locked = false; R.x = START_X; R.vx = curSpeed(); R.vy = 0; R.a = 0; R.roll = 0; R.spin = 0; R.ready = ready; R.visible = true; R.ty = R.y; brakeLevel = 0; }
+function resetRocket(ready) { R.drift = 0; R.boost = 0; R.inWell = false; R.wob = 0; R.lock = 0; R.locked = false; R.x = START_X; R.vx = curSpeed(); R.vy = 0; R.a = 0; R.roll = 0; R.spin = 0; R.ready = ready; R.visible = true; R.ty = R.y; brakeLevel = 0; }
 
 function startGame(demoMode = false, startLv = 0) {
   A.init(); A.resume(); A.restartSong();
@@ -949,7 +956,7 @@ function startGame(demoMode = false, startLv = 0) {
   spawnAcc = 0; stY = H * 0.7; R.y = H / 2;
   demo = demoMode; document.getElementById('app').classList.toggle('demo', demo);
   level = startLv || (testMode ? (S.startLv | 0) || 1 : 1); levelT = 0; levelDocks = 0; levelPending = false; banner = null; jumpTo = null; boom = null;
-  makeSaturns(); resetRocket(1.2); R.inv = 0;
+  makeSaturns(); resetRocket(0); clampToLauncher(); R.inv = 0;
   A.setSong(level >= 3 ? 'march' : 'disco');
   phase = 'fly'; state = 'play'; ov.hidden = true;
   syncTestUI();
@@ -970,9 +977,20 @@ function safeRespawnY() {
   }
   return H / 2;
 }
+// the launch station on the left brings a fresh ship down from the top; the player's first move releases it
+function clampToLauncher() {
+  lsY = TOP - 30; R.clamped = true; R.clampT = 0; R.ready = 0;
+  R.x = START_X; R.y = lsY; R.ty = R.y; R.vx = 0; R.vy = 0; R.a = 0; R.roll = 0;
+}
+function launch() {
+  R.clamped = false; R.vx = curSpeed() * 0.5; R.drift = S.station * 0.9; // keeps a little of the station's downward drift
+  A.launchFx(); burst(R.x - 14, R.y, 18, ['#fff', '#ffd36e', '#9feeff'], 90, 0.5);
+  if (level >= 3) for (let i = 0; i < 6; i++) steam.push({ x: LS_X + 22, y: R.y + (i % 2 ? 8 : -8), vx: -6 - Math.random() * 10, vy: (i % 2 ? 1 : -1) * (8 + Math.random() * 10), r: 2, t: 0, life: 1.1 });
+  if (trip) { trip.ly = Math.round(R.y); trip.wait = r1(R.clampT); }
+}
 function relaunch(ready) {
   const up = levelPending ? levelUp() : false;
-  resetRocket(up ? 2.4 : ready);
+  resetRocket(0); clampToLauncher();
   tripStart();
 }
 function levelUp() {
@@ -1091,7 +1109,7 @@ function detonate(m) {
 }
 
 function dropMine() {
-  if (state !== 'play' || phase !== 'fly' || R.ready > 0) return;
+  if (state !== 'play' || phase !== 'fly' || R.ready > 0 || R.clamped) return;
   if (mineStock <= 0) { A.empty(); return; }
   mines.push({ x: R.x - 8, y: R.y, t: 0 }); mineStock--; A.drop(); updateMineBtn();
   if (G) G.mines++; if (trip) trip.mines++;
@@ -1104,6 +1122,7 @@ function update(dt, rdt = dt) {
   time += dt;
   if (state === 'paused') return;
   stY -= S.station * dt; if (stY < -48) stY = H + 48;
+  lsY += S.station * dt; if (lsY > H + 48) lsY = -48;
   for (const f of far) { f.x -= f.sp * dt; if (f.x < 0) f.x += W; }
   for (const p of parts) { p.t += dt; p.x += p.vx * dt; p.y += p.vy * dt; p.vx *= 0.98; p.vy *= 0.98; }
   parts = parts.filter(p => p.t < p.life);
@@ -1128,7 +1147,7 @@ function update(dt, rdt = dt) {
       if (boom.t < 1.2 && Math.random() < dt * 30 && parts.length < 700) parts.push({ x: d.x, y: d.y, vx: 0, vy: 0, life: 0.5, t: 0, c: Math.random() < 0.5 ? '#ffb347' : '#ff6a3c', s: 1.6 }); }
     if (boom.t > 2.4) boom = null;
   }
-  if (state !== 'play') { if (state === 'title') { R.y = H / 2 + Math.sin(time * 1.3) * 30; R.a = S.style === 'roll' ? 0 : Math.cos(time * 1.3) * 0.25; R.roll = S.style === 'tilt' ? 0 : Math.cos(time * 1.3) * 0.9; } return; }
+  if (state !== 'play') { if (state === 'title') { R.y = H / 2 + Math.sin(time * 1.3) * 30; lsY = R.y; R.a = S.style === 'roll' ? 0 : Math.cos(time * 1.3) * 0.25; R.roll = S.style === 'tilt' ? 0 : Math.cos(time * 1.3) * 0.9; } return; }
 
   levelT += dt;
   for (const o of saturns) { o.u += dt / o.dur; if (o.u > 1) o.u -= 1; satPos(o); }
@@ -1185,6 +1204,19 @@ function update(dt, rdt = dt) {
 }
 
 function updateRocket(dt) {
+  if (R.clamped) {
+    R.clampT += dt; R.x = START_X; R.vx = 0; R.vy = 0; R.a *= 0.8; R.roll *= 0.8;
+    const moved = Math.abs(R.ty - R.y) > 2 || keys.up || keys.down || gpUp || gpDown || gpAxis !== 0; // the first move
+    R.y = lsY;
+    const can = lsY >= TOP + 8;
+    let go = false;
+    if (demo) go = can && R.clampT > 0.6 && (laneCost(R.y, Math.max(25, curSpeed())) < 40 || R.clampT > 4);
+    else go = can && moved;
+    if (can && lsY >= BOT - 14) go = true; // end of the line: launched anyway
+    A.thrust(0); A.brake(0);
+    if (!go) { R.ty = R.y; return; }
+    const keep = R.ty; launch(); R.ty = clamp(demo ? R.y : keep, TOP + 8, BOT - 8);
+  }
   if (demo) aiSteer(dt);
   else if (keys.up || keys.down || gpUp || gpDown) { R.ty = R.y + ((keys.down || gpDown ? 1 : 0) - (keys.up || gpUp ? 1 : 0)) * 60; gpSteer = gpUp || gpDown; }
   else if (gpAxis && !drag) { R.ty = R.y + gpAxis * VMAX / 9; gpSteer = true; } // analog: stick deflection sets the climb/dive speed; the touch strip wins
@@ -1200,6 +1232,7 @@ function updateRocket(dt) {
   R.a += (tiltT - R.a) * Math.min(1, dt * 10);
   R.roll += (rollT - R.roll) * Math.min(1, dt * 8);
   if (R.wob > 0) R.wob = Math.max(0, R.wob - dt * 2.2);
+  if (R.drift > 0.5) { R.ty = clamp(R.ty + R.drift * dt, TOP + 8, BOT - 8); R.drift *= Math.exp(-dt * 1.2); }
   A.thrust(Math.min(1, Math.abs(R.vy) / VMAX));
   if (R.inv > 0) R.inv -= dt;
   const wantBrake = braking && fuel > 0 && R.ready <= 0;
@@ -1500,6 +1533,7 @@ function drawStationSteam(sx, sy) {
   ctx.fillRect(-22, -11, 9, 22); ctx.strokeRect(-22, -11, 9, 22);
   ctx.fillStyle = '#ffe3a0'; for (const ry of [-9, 9]) { ctx.beginPath(); ctx.arc(-15, ry, 0.9, 0, 6.283); ctx.fill(); }
   ctx.fillStyle = '#0d0a06'; ctx.fillRect(-22, -7, 3, 14);
+  if (!drawingLaunch) {
   // the marked middle, in verdigris green
   const bg = ctx.createLinearGradient(-110, 0, -24, 0);
   bg.addColorStop(0, 'rgba(63,224,184,0)'); bg.addColorStop(1, `rgba(63,224,184,${0.16 + pulse * 0.14})`);
@@ -1514,6 +1548,7 @@ function drawStationSteam(sx, sy) {
     ctx.strokeStyle = on ? '#3fe0b8' : 'rgba(63,224,184,0.2)'; ctx.lineWidth = 1.5;
     const cx = -30 - i * 7;
     ctx.beginPath(); ctx.moveTo(cx + 3, -4); ctx.lineTo(cx, 0); ctx.lineTo(cx + 3, 4); ctx.stroke();
+  }
   }
   ctx.restore();
 }
@@ -1556,6 +1591,7 @@ function drawStationDark(sx, sy) {
   const hg = ctx.createLinearGradient(-22, 0, -14, 0);
   hg.addColorStop(0, `rgba(255,180,70,${0.25 + pulse * 0.25})`); hg.addColorStop(1, 'rgba(255,180,70,0)');
   ctx.fillStyle = hg; ctx.fillRect(-22, -7, 8, 14);
+  if (!drawingLaunch) {
   // the marked middle, in amber
   const bg = ctx.createLinearGradient(-110, 0, -24, 0);
   bg.addColorStop(0, 'rgba(255,190,80,0)'); bg.addColorStop(1, `rgba(255,190,80,${0.16 + pulse * 0.14})`);
@@ -1570,6 +1606,7 @@ function drawStationDark(sx, sy) {
     ctx.strokeStyle = on ? '#ffc35a' : 'rgba(255,195,90,0.2)'; ctx.lineWidth = 1.5;
     const cx = -30 - i * 7;
     ctx.beginPath(); ctx.moveTo(cx + 3, -4); ctx.lineTo(cx, 0); ctx.lineTo(cx + 3, 4); ctx.stroke();
+  }
   }
   ctx.strokeStyle = '#4c5370'; ctx.lineWidth = 1.2;
   ctx.beginPath(); ctx.moveTo(-5, -34); ctx.lineTo(-5, -46); ctx.moveTo(4, -34); ctx.lineTo(4, -41); ctx.stroke();
@@ -1602,6 +1639,7 @@ function drawStation(sx, sy) {
   const pulse = 0.5 + 0.5 * Math.sin(time * 6);
   ctx.fillStyle = `rgba(125,255,154,${0.35 + pulse * 0.65})`;
   ctx.fillRect(-24, -13, 3, 3); ctx.fillRect(-24, 10, 3, 3);
+  if (!drawingLaunch) {
   // the marked middle: docking beam and green brackets around the port
   const bg = ctx.createLinearGradient(-110, 0, -24, 0);
   bg.addColorStop(0, 'rgba(125,255,154,0)'); bg.addColorStop(1, `rgba(125,255,154,${0.18 + pulse * 0.15})`);
@@ -1617,6 +1655,7 @@ function drawStation(sx, sy) {
     ctx.strokeStyle = on ? '#7dff9a' : 'rgba(125,255,154,0.2)'; ctx.lineWidth = 1.5;
     const cx = -30 - i * 7;
     ctx.beginPath(); ctx.moveTo(cx + 3, -4); ctx.lineTo(cx, 0); ctx.lineTo(cx + 3, 4); ctx.stroke();
+  }
   }
   // antenna
   ctx.strokeStyle = '#8a90b8'; ctx.lineWidth = 1.2;
@@ -1833,12 +1872,15 @@ function render() {
   drawMines();
   drawPops();
   if (steam.length) drawSteam();
+  ctx.save(); ctx.translate(2 * LS_X, 0); ctx.scale(-1, 1); drawingLaunch = true; // the launch station: a mirrored station on the left
+  if (state !== 'title' && level >= 3) drawStationSteam(LS_X, lsY); else if (state !== 'title' && level >= 2) drawStationDark(LS_X, lsY); else drawStation(LS_X, lsY);
+  drawingLaunch = false; ctx.restore();
   if (state !== 'title' && level >= 3) drawStationSteam(ST_X, stY);
   else if (state !== 'title' && level >= 2) drawStationDark(ST_X, stY); else drawStation(ST_X, stY);
   if (R.visible && state !== 'over') {
     const blink = R.inv > 0 && Math.floor(time * 12) % 2 === 0;
     ctx.globalAlpha = blink ? 0.35 : 1;
-    const flame = state === 'title' ? 0.8 : (phase === 'dock' ? 0.3 : (R.ready > 0 ? 0.45 : 0.25 + 0.75 * clamp(R.vx / Math.max(1, curSpeed()), 0, 1.6)));
+    const flame = state === 'title' ? 0.8 : (phase === 'dock' ? 0.3 : (R.clamped ? 0.25 : R.ready > 0 ? 0.45 : 0.25 + 0.75 * clamp(R.vx / Math.max(1, curSpeed()), 0, 1.6)));
     if (state === 'play' && phase === 'fly' && R.boost > 3) { // speed lines while boosted
       const k = R.boost / Math.max(1, curSpeed());
       ctx.strokeStyle = `rgba(110,243,255,${Math.min(0.5, k)})`; ctx.lineWidth = 1;
@@ -1856,8 +1898,8 @@ function render() {
   ctx.font = 'bold 15px "Share Tech Mono", ui-monospace, monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   for (const f of floats) { ctx.globalAlpha = Math.max(0, 1 - f.t / 1.3); ctx.fillStyle = f.c; ctx.fillText(f.text, f.x, f.y); }
   ctx.globalAlpha = 1;
-  if (state === 'play' && phase === 'fly' && R.ready > 0 && Math.floor(time * 5) % 2 === 0) {
-    ctx.fillStyle = '#6ef3ff'; ctx.fillText('READY', R.x + 6, R.y - 24);
+  if (state === 'play' && phase === 'fly' && R.clamped && !demo && lsY >= TOP + 8 && Math.floor(time * 3) % 2 === 0) {
+    ctx.fillStyle = '#6ef3ff'; ctx.textAlign = 'left'; ctx.fillText('\u25b2\u25bc MOVE TO LAUNCH', R.x - 10, R.y - 24); ctx.textAlign = 'center';
   }
   if (banner && state === 'play') {
     const k = banner.t, a = k < 0.3 ? k / 0.3 : k > 2.1 ? Math.max(0, (2.6 - k) / 0.5) : 1;
@@ -1948,7 +1990,7 @@ function frame(now) {
 
 /* ================= overlay ================= */
 const HELP = `<ul>
-<li>Your rocket flies right on its own. You only steer <b>up and down</b>: drag in the <b>SLIDE</b> strip on the right (or ↑ ↓ / W S).</li>
+<li>Your ship rides down the <b>launch station</b> on the left: your <b>first move</b> (slide strip, ↑ ↓ / W S or the stick) launches it. Then it flies right on its own and you steer <b>up and down</b>.</li>
 <li>Fly <b>nose-first into the green-marked port</b> of the moving station: <b>+1000</b> and an extra mine. Hit it anywhere else and you bounce off. Hold <b style="color:#6ef3ff">BRAKE</b> (← / Shift) to time it. The fuel ring refills.</li>
 <li>New stars <span style="color:#6ef3ff">blink for 5 seconds</span> and are harmless. Then they turn <span style="color:#ffe9a8">solid</span> and deadly, like the ringed planets.</li>
 <li><b style="color:#ff9a9a">MINE</b> (or Space) clears nearby stars after 5 seconds. Be well away by then! Planets are mine-proof. Lose a life with no mines left and you get 3 more.</li>
