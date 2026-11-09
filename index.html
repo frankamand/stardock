@@ -145,7 +145,7 @@ h1{font-family:'Orbitron',sans-serif;font-weight:900;font-size:clamp(22px,calc(4
 
 <script>
 'use strict';
-const VERSION = 'v1.18';
+const VERSION = 'v1.20';
 /* ================= constants & settings ================= */
 const W = 800, H = 450, TOP = 36, BOT = H - 10;
 const LS_X = 12, START_X = 50, SAFE_L = 96, SAFE_R = W - 104, ST_X = W - 34;
@@ -894,7 +894,7 @@ function stopDemo() {
 let G = null, trip = null, statsState = '', dbP = null, saving = false, saveAgain = false;
 const r1 = v => Math.round(v * 10) / 10;
 function newStats() {
-  G = { v: 1, ver: VERSION, id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), startedAt: new Date().toISOString(), test: testMode,
+  G = { v: 1, game: 'stardock', ver: VERSION, id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), startedAt: new Date().toISOString(), test: testMode,
     settings: { speed: S.speed, rate: S.rate, station: S.station, step: S.step, lvDocks: S.lvDocks, lvMin: S.lvMin, style: S.style, grav: S.grav },
     device: { w: innerWidth, h: innerHeight, touch: coarse }, t: 0, score: 0, docks: 0, level: 1, ended: 'playing',
     levels: [], trips: [], samples: [], mines: 0, mineCleared: 0, brake: 0 };
@@ -927,14 +927,47 @@ async function saveStats() {
   const snap = JSON.parse(JSON.stringify(G));
   statsState = 'saving'; statsNote();
   const db = await getDb();
-  if (!db) statsState = 'nodb';
+  if (!db) {
+    if ((snap.ended === 'gameover' || snap.ended === 'left') && !G.formSent && !snap.test) {
+      G.formSent = true;
+      try { await sendToForm(snap); statsState = 'form'; } catch (e) { G.formSent = false; statsState = 'nodb'; }
+    } else statsState = G.formSent ? 'form' : 'nodb';
+  }
   else { try { await db.collection('games').doc(snap.id).set(snap); statsState = 'ok'; } catch (e) { statsState = 'fail'; } }
   saving = false; statsNote();
   if (saveAgain) { saveAgain = false; saveStats(); }
 }
+// Outside Claude (the GitHub version) finished games go to Frank's Google Form, one JSON answer per game,
+// marked "game":"stardock". The Claude version keeps using its own database.
+const STATS_FORM = 'https://docs.google.com/forms/d/e/1FAIpQLSfjp0tfYRY-aHXl0e1rUJkpYziRdXRmBnbfuH4GNIMVrnoefg/formResponse';
+const STATS_FIELD = 'entry.1095432636';
+function formPayload(g) {
+  let t = JSON.stringify(g);
+  if (t.length > 45000) { // a sheet cell holds 50,000 characters: drop the samples, then the oldest trips
+    const c = JSON.parse(t); delete c.samples; c.trimmed = true;
+    while (JSON.stringify(c).length > 45000 && c.trips.length > 20) c.trips = c.trips.slice(-Math.floor(c.trips.length * 0.7));
+    t = JSON.stringify(c);
+  }
+  return t;
+}
+function sendToForm(g) {
+  const body = new URLSearchParams(); body.set(STATS_FIELD, formPayload(g));
+  return fetch(STATS_FORM, { method: 'POST', mode: 'no-cors', body, keepalive: true });
+}
+function copyText(t) {
+  const old = () => {
+    const ta = document.createElement('textarea'); ta.value = t; ta.setAttribute('readonly', '');
+    ta.style.cssText = 'position:fixed;left:0;top:0;opacity:0'; document.body.appendChild(ta);
+    ta.select(); ta.setSelectionRange(0, t.length);
+    let ok = false; try { ok = document.execCommand('copy'); } catch (e) {}
+    ta.remove(); return ok;
+  };
+  try { if (navigator.clipboard && navigator.clipboard.writeText) return navigator.clipboard.writeText(t).then(() => true).catch(() => old()); } catch (e) {}
+  return Promise.resolve(old());
+}
 function statsNote() {
   const el = document.getElementById('statsNote'); if (!el) return;
-  el.textContent = { saving: 'Saving game stats\u2026', ok: '\u2713 Game stats saved', nodb: 'Stats can\u2019t be saved in this view. Use Copy stats.', fail: 'Couldn\u2019t save the stats. Use Copy stats.' }[statsState] || '';
+  el.textContent = { saving: 'Saving game stats\u2026', ok: '\u2713 Game stats saved', form: '\u2713 Game stats sent to your Google Sheet', nodb: 'Stats can\u2019t be saved in this view. Use Copy stats.', fail: 'Couldn\u2019t save the stats. Use Copy stats.' }[statsState] || '';
 }
 let stars = [], mines = [], blasts = [], parts = [], floats = [];
 let stY = H * 0.6, spawnAcc = 0, time = 0, dockT = 0, deadT = 0, shake = 0;
@@ -2008,8 +2041,15 @@ function showOverlay(kind) {
     ovBody.innerHTML = `<div class="c">Level ${level} \u00b7 ${newBest ? '<b style="color:#ffd36e">★ New best score! ★</b>' : 'Best: ' + pad6(best)}${testMode ? '<br><span style="color:#ffd36e">Test mode: best score not saved</span>' : ''}<div id="statsNote"></div><button class="small" id="btnCopyStats">Copy stats</button></div>`;
     statsNote();
     $('btnCopyStats').addEventListener('click', () => {
-      const b = $('btnCopyStats');
-      try { navigator.clipboard.writeText(JSON.stringify(G)).then(() => { b.textContent = 'Copied \u2713'; }).catch(() => { b.textContent = 'Copy blocked'; }); } catch (e) { b.textContent = 'Copy blocked'; }
+      const b = $('btnCopyStats'), t = JSON.stringify(G);
+      copyText(t).then(ok => {
+        if (ok) { b.textContent = 'Copied \u2713'; return; }
+        // the browser refused both ways: show the text so it can be copied by hand
+        b.textContent = 'Press and hold the text below to copy';
+        let ta = document.getElementById('statsText');
+        if (!ta) { ta = document.createElement('textarea'); ta.id = 'statsText'; ta.readOnly = true; ta.style.cssText = 'width:100%;height:5.5em;margin-top:.5em;font:11px ui-monospace,monospace;color:#cfe;background:#07021a;border:1px solid rgba(110,243,255,.4);border-radius:6px'; b.after(ta); }
+        ta.value = t; ta.focus(); ta.select();
+      });
     });
     btnPlay.textContent = 'PLAY AGAIN';
   }
