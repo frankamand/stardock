@@ -1,5 +1,5 @@
 // Star Dock offline cache. Bump VERSION whenever any file changes, so phones fetch the new version.
-const VERSION = 'stardock-v1.17';
+const VERSION = 'stardock-v1.18';
 const FILES = [
   './', './index.html', './manifest.webmanifest',
   './fonts/orbitron-latin-700-normal.woff2', './fonts/orbitron-latin-900-normal.woff2', './fonts/share-tech-mono-latin-400-normal.woff2',

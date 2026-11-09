@@ -145,7 +145,7 @@ h1{font-family:'Orbitron',sans-serif;font-weight:900;font-size:clamp(22px,calc(4
 
 <script>
 'use strict';
-const VERSION = 'v1.17';
+const VERSION = 'v1.18';
 /* ================= constants & settings ================= */
 const W = 800, H = 450, TOP = 36, BOT = H - 10;
 const LS_X = 12, START_X = 50, SAFE_L = 96, SAFE_R = W - 104, ST_X = W - 34;
@@ -2019,8 +2019,18 @@ $('btnDemo').addEventListener('click', () => { A.init(); A.resume(); startDemo()
 document.getElementById('stage').addEventListener('pointerdown', () => { idleT = 0; if (demo) stopDemo(); });
 btnPlay.addEventListener('click', () => {
   A.init(); A.resume();
+  autoFullscreen();
   if (ovKind === 'pause') resumeGame(); else startGame();
 });
+// on phones, PLAY also switches to full screen (quietly; the browser may refuse, the button still works)
+function autoFullscreen() {
+  try {
+    if (!coarse || isFs() || matchMedia('(display-mode: fullscreen)').matches) return;
+    const el = document.documentElement, req = el.requestFullscreen || el.webkitRequestFullscreen; if (!req) return;
+    const p = req.call(el, { navigationUI: 'hide' });
+    if (p && p.then) p.then(() => { try { screen.orientation.lock('landscape').catch(() => {}); } catch (e) {} }).catch(() => {});
+  } catch (e) {}
+}
 
 /* ================= test mode ================= */
 const tS = $('tSpeed'), tR = $('tRate'), tSt = $('tStation'), tG = $('tGod'), tStep = $('tStep'), tLvD = $('tLvD'), tLvM = $('tLvM');
